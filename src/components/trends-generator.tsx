@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { TrendingUp } from "lucide-react";
+import { useState, useRef, useEffect } from "react";
+import { TrendingUp, Clock, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ResultsPanel } from "@/components/results-panel";
@@ -9,15 +9,66 @@ import { COUNTRY_GROUPS, TIME_RANGES, CountryGroup, TimeRange } from "@/lib/cons
 import { generateTrendsLinks, GeneratedLink } from "@/lib/generate-links";
 import { cn } from "@/lib/utils";
 
+const HISTORY_KEY = "gt_keyword_history";
+const MAX_HISTORY = 8;
+
+function loadHistory(): string[] {
+  try {
+    return JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+  } catch {
+    return [];
+  }
+}
+
+function saveToHistory(keyword: string) {
+  const prev = loadHistory().filter((k) => k !== keyword);
+  const next = [keyword, ...prev].slice(0, MAX_HISTORY);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+}
+
+function removeFromHistory(keyword: string) {
+  const next = loadHistory().filter((k) => k !== keyword);
+  localStorage.setItem(HISTORY_KEY, JSON.stringify(next));
+}
+
 export function TrendsGenerator() {
   const [keyword, setKeyword] = useState("");
   const [selectedTimeRange, setSelectedTimeRange] = useState<TimeRange | null>(null);
   const [selectedGroup, setSelectedGroup] = useState<CountryGroup | null>(null);
   const [generatedLinks, setGeneratedLinks] = useState<GeneratedLink[]>([]);
   const [error, setError] = useState("");
+  const [history, setHistory] = useState<string[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  // Load history on mount (client-only)
+  useEffect(() => {
+    setHistory(loadHistory());
+  }, []);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    function handleClick(e: MouseEvent) {
+      if (
+        dropdownRef.current &&
+        !dropdownRef.current.contains(e.target as Node) &&
+        !inputRef.current?.contains(e.target as Node)
+      ) {
+        setShowHistory(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, []);
+
+  const filteredHistory = keyword.trim()
+    ? history.filter((k) => k.toLowerCase().includes(keyword.toLowerCase()) && k !== keyword.trim())
+    : history;
 
   function handleGenerate() {
     setError("");
+    setShowHistory(false);
 
     if (!keyword.trim()) {
       setError("请输入关键词");
@@ -32,12 +83,27 @@ export function TrendsGenerator() {
       return;
     }
 
+    saveToHistory(keyword.trim());
+    setHistory(loadHistory());
+
     const links = generateTrendsLinks(
       keyword.trim(),
       selectedTimeRange.value,
       selectedGroup.countries
     );
     setGeneratedLinks(links);
+  }
+
+  function handleSelectHistory(kw: string) {
+    setKeyword(kw);
+    setShowHistory(false);
+    inputRef.current?.focus();
+  }
+
+  function handleRemoveHistory(e: React.MouseEvent, kw: string) {
+    e.stopPropagation();
+    removeFromHistory(kw);
+    setHistory(loadHistory());
   }
 
   const isReady = keyword.trim() && selectedTimeRange && selectedGroup;
@@ -47,12 +113,50 @@ export function TrendsGenerator() {
       {/* Keyword Input */}
       <div className="space-y-1.5">
         <label className="text-sm font-medium text-gray-700">关键词</label>
-        <Input
-          value={keyword}
-          onChange={(e) => setKeyword(e.target.value)}
-          placeholder="输入关键词，如 happy horse ai"
-          onKeyDown={(e) => e.key === "Enter" && isReady && handleGenerate()}
-        />
+        <div className="relative">
+          <Input
+            ref={inputRef}
+            value={keyword}
+            onChange={(e) => setKeyword(e.target.value)}
+            placeholder="输入关键词，如 happy horse ai"
+            onFocus={() => history.length > 0 && setShowHistory(true)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && isReady) handleGenerate();
+              if (e.key === "Escape") setShowHistory(false);
+            }}
+          />
+
+          {/* History Dropdown */}
+          {showHistory && filteredHistory.length > 0 && (
+            <div
+              ref={dropdownRef}
+              className="absolute top-full left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg z-10 overflow-hidden"
+            >
+              <div className="px-3 py-1.5 border-b border-gray-100 flex items-center justify-between">
+                <span className="text-xs text-gray-400 flex items-center gap-1">
+                  <Clock className="h-3 w-3" />
+                  最近输入
+                </span>
+              </div>
+              {filteredHistory.map((kw) => (
+                <div
+                  key={kw}
+                  className="flex items-center justify-between px-3 py-2 hover:bg-gray-50 cursor-pointer group"
+                  onMouseDown={() => handleSelectHistory(kw)}
+                >
+                  <span className="text-sm text-gray-700">{kw}</span>
+                  <button
+                    className="text-gray-300 hover:text-gray-500 opacity-0 group-hover:opacity-100 transition-opacity p-0.5 rounded"
+                    onMouseDown={(e) => handleRemoveHistory(e, kw)}
+                    title="删除"
+                  >
+                    <X className="h-3.5 w-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Time Range */}
